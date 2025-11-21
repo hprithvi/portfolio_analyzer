@@ -584,7 +584,7 @@ def main():
         
         with col1:
             # Portfolio allocation pie chart
-            fig_allocation = plot_portfolio_allocation(st.session_state.portfolio.portfolio)
+            fig_allocation = MutualFundPortfolio.plot_portfolio_allocation(st.session_state.portfolio.portfolio)
             st.plotly_chart(fig_allocation, use_container_width=True)
         
         with col2:
@@ -611,7 +611,7 @@ def main():
             
             # NAV History
             st.header("📊 Historical Performance")
-            fig_nav = plot_nav_history(st.session_state.portfolio.nav_data)
+            fig_nav =MutualFundPortfolio.plot_nav_history(st.session_state.portfolio.nav_data)
             st.plotly_chart(fig_nav, use_container_width=True)
             
             st.markdown("---")
