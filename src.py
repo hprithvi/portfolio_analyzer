@@ -828,10 +828,10 @@ def main():
                     '6M Median Return (%)': [st.session_state.results_6m['median']*100] * len(st.session_state.portfolio.portfolio),
                 }
                 
-                summary_df = pd.DataFrame(summary)
+            summary_df = pd.DataFrame(summary)
                 
-                csv = summary_df.to_csv(index=False)
-                st.download_button(
+            csv = summary_df.to_csv(index=False)
+            st.download_button(
                     label="📥 Download Portfolio Summary (CSV)",
                     data=csv,
                     file_name=f"portfolio_summary_{datetime.now().strftime('%Y%m%d')}.csv",
@@ -839,9 +839,9 @@ def main():
                     use_container_width=True
                 )
             
-            with col2:
+        with col2:
                 # Create detailed results
-                detailed_results = {
+            detailed_results = {
                     'Metric': [
                         'Daily Volatility (%)',
                         'Annual Volatility (%)',
@@ -872,10 +872,10 @@ def main():
                     ]
                 }
                 
-                detailed_df = pd.DataFrame(detailed_results)
-                csv_detailed = detailed_df.to_csv(index=False)
+            detailed_df = pd.DataFrame(detailed_results)
+            csv_detailed = detailed_df.to_csv(index=False)
                 
-                st.download_button(
+            st.download_button(
                     label="📥 Download Detailed Results (CSV)",
                     data=csv_detailed,
                     file_name=f"detailed_results_{datetime.now().strftime('%Y%m%d')}.csv",
@@ -884,10 +884,10 @@ def main():
                 )
             
             # Interpretation guide
-            st.markdown("---")
-            st.header("📖 Understanding Your Results")
+        st.markdown("---")
+        st.header("📖 Understanding Your Results")
             
-            with st.expander("🎯 What do the percentiles mean?"):
+        with st.expander("🎯 What do the percentiles mean?"):
                 st.markdown("""
                 **Bottom 10th Percentile**: There's a 90% chance your returns will be better than this value. 
                 This represents a pessimistic but realistic worst-case scenario.
@@ -899,7 +899,7 @@ def main():
                 This represents an optimistic but achievable scenario.
                 """)
             
-            with st.expander("⚠️ How to interpret volatility?"):
+        with st.expander("⚠️ How to interpret volatility?"):
                 st.markdown("""
                 **Daily Volatility**: Day-to-day price fluctuations. Lower is generally better for risk-averse investors.
                 
@@ -911,7 +911,7 @@ def main():
                 Higher volatility means more uncertainty but potentially higher returns.
                 """)
             
-            with st.expander("🔗 What does correlation tell you?"):
+        with st.expander("🔗 What does correlation tell you?"):
                 st.markdown("""
                 **Correlation Matrix**: Shows how funds move together.
                 
@@ -922,7 +922,7 @@ def main():
                 **Diversification Tip**: Look for funds with lower correlations (< 0.7) to reduce portfolio risk.
                 """)
             
-            with st.expander("📊 Monte Carlo Simulation explained"):
+        with st.expander("📊 Monte Carlo Simulation explained"):
                 st.markdown("""
                 **What it does**: Runs thousands of scenarios based on historical data to project potential future outcomes.
                 
@@ -935,7 +935,7 @@ def main():
                 **Important**: Past performance doesn't guarantee future results. These are probabilistic projections.
                 """)
             
-            with st.expander("✅ Investment recommendations"):
+        with st.expander("✅ Investment recommendations"):
                 # Dynamic recommendations based on results
                 st.markdown("### Based on your portfolio analysis:")
                 
