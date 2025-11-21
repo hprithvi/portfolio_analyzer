@@ -972,3 +972,18 @@ def main():
         # Welcome screen
         st.info("""
         ### 👋 Welcome to the Mutual Fund Portfolio Analyzer!""")
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style='text-align: center; color: #666; padding: 20px;'>
+        <p>Made with ❤️ using Streamlit | 
+        <a href='https://github.com' target='_blank'>GitHub</a> | 
+        <a href='https://docs.streamlit.io' target='_blank'>Documentation</a></p>
+        <p style='font-size: 0.8em;'>⚠️ Disclaimer: This tool is for educational purposes only. 
+        Not financial advice. Consult a professional advisor before investing.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+if __name__ == "__main__":
+    main()
