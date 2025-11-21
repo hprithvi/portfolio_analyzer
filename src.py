@@ -56,7 +56,7 @@ class MutualFundPortfolio:
         self.correlation_matrix = None
         
     def add_fund(self, fund_name, allocation_percentage):
-        """Add a mutual fund to the portfolio with its allocation"""
+        #"""Add a mutual fund to the portfolio with its allocation"""
         if allocation_percentage < 0 or allocation_percentage > 100:
             raise ValueError("Allocation percentage must be between 0 and 100")
         
@@ -64,14 +64,14 @@ class MutualFundPortfolio:
         return True
     
     def validate_portfolio(self):
-        """Check if total allocation equals 100%"""
+        #"""Check if total allocation equals 100%"""
         total = sum(self.portfolio.values()) * 100
         if not np.isclose(total, 100, atol=0.01):
             return False, total
         return True, total
     
     def fetch_nav_data(self, fund_symbol, start_date=None, end_date=None):
-        """Fetch historical NAV data for a mutual fund"""
+        #"""Fetch historical NAV data for a mutual fund"""
         if start_date is None:
             start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
         if end_date is None:
@@ -90,7 +90,7 @@ class MutualFundPortfolio:
             return None
     
     def fetch_indian_mf_data(self, scheme_code, start_date=None):
-        """Fetch NAV data for Indian Mutual Funds using mfapi.in"""
+        #"""Fetch NAV data for Indian Mutual Funds using mfapi.in"""
         try:
             url = f"https://api.mfapi.in/mf/{scheme_code}"
             response = requests.get(url)
@@ -116,7 +116,7 @@ class MutualFundPortfolio:
             return None
     
     def calculate_returns(self):
-        """Calculate daily returns for all funds in portfolio"""
+        #"""Calculate daily returns for all funds in portfolio"""
         if not self.nav_data:
             raise ValueError("No NAV data available. Fetch data first.")
         
@@ -130,7 +130,7 @@ class MutualFundPortfolio:
         return self.returns_data
     
     def calculate_portfolio_risk(self):
-        """Calculate portfolio risk using weights and correlations"""
+        #"""Calculate portfolio risk using weights and correlations"""
         if self.returns_data is None:
             self.calculate_returns()
         
@@ -158,7 +158,7 @@ class MutualFundPortfolio:
         }
     
     def monte_carlo_simulation(self, months=3, num_simulations=10000):
-        """Run Monte Carlo simulation for portfolio returns"""
+        #"""Run Monte Carlo simulation for portfolio returns"""
         if self.returns_data is None:
             self.calculate_returns()
         
@@ -205,7 +205,7 @@ class MutualFundPortfolio:
 
 
     def plot_portfolio_allocation(portfolio_dict):
-    """Create pie chart for portfolio allocation"""
+    #"""Create pie chart for portfolio allocation"""
         fig = go.Figure(data=[go.Pie(
         labels=list(portfolio_dict.keys()),
         values=[v*100 for v in portfolio_dict.values()],
@@ -223,7 +223,7 @@ class MutualFundPortfolio:
 
 
     def plot_correlation_heatmap(correlation_matrix):
-    """Create correlation heatmap"""
+    #"""Create correlation heatmap"""
         fig = go.Figure(data=go.Heatmap(
         z=correlation_matrix.values,
         x=correlation_matrix.columns,
@@ -246,7 +246,7 @@ class MutualFundPortfolio:
 
 
     def plot_nav_history(nav_data):
-    """Plot NAV history for all funds"""
+    #"""Plot NAV history for all funds"""
         fig = go.Figure()
     
         for fund, nav in nav_data.items():
@@ -271,7 +271,7 @@ class MutualFundPortfolio:
 
 
     def plot_monte_carlo_distribution(final_returns, median, top_20, bottom_10):
-    """Plot distribution of Monte Carlo simulation results"""
+    #"""Plot distribution of Monte Carlo simulation results"""
         fig = go.Figure()
     
     # Histogram
@@ -303,7 +303,7 @@ class MutualFundPortfolio:
 
 
     def plot_simulation_paths(simulations, num_paths=100):
-    """Plot sample simulation paths"""
+    #"""Plot sample simulation paths"""
         fig = go.Figure()
     
     # Plot random sample of paths
@@ -339,7 +339,7 @@ class MutualFundPortfolio:
 
 
     def plot_risk_metrics(annual_volatility, daily_volatility):
-    """Create gauge charts for risk metrics"""
+    #"""Create gauge charts for risk metrics"""
         fig = make_subplots(
         rows=1, cols=2,
         specs=[[{'type': 'indicator'}, {'type': 'indicator'}]]
@@ -386,7 +386,7 @@ class MutualFundPortfolio:
 
 
     def plot_percentile_comparison(results_3m, results_6m):
-    """Compare percentiles across different time horizons"""
+    #"""Compare percentiles across different time horizons"""
         categories = ['Bottom 10%', 'Median', 'Top 20%', 'Mean']
     
         values_3m = [
@@ -420,7 +420,7 @@ class MutualFundPortfolio:
 
 
 def main():
-    """Main Streamlit app"""
+    #"""Main Streamlit app"""
     
     # Header
     st.markdown('<h1 class="main-header">📊 Mutual Fund Portfolio Analyzer</h1>', unsafe_allow_html=True)
