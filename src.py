@@ -971,4 +971,4 @@ def main():
     else:
         # Welcome screen
         st.info("""
-        ### 👋 Welcome to the Mutual Fund Portfolio Analyzer!)
+        ### 👋 Welcome to the Mutual Fund Portfolio Analyzer!""")
