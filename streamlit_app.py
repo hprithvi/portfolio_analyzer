@@ -622,7 +622,7 @@ def main():
             risk_metrics = st.session_state.risk_metrics
             
             # Risk gauges
-            fig_risk = plot_risk_metrics(
+            fig_risk = MutualFundPortfolio.plot_risk_metrics(
                 risk_metrics['annual_volatility'],
                 risk_metrics['daily_volatility']
             )
@@ -657,7 +657,7 @@ def main():
             
             # Correlation heatmap
             st.subheader("Fund Correlations")
-            fig_corr = plot_correlation_heatmap(risk_metrics['correlation_matrix'])
+            fig_corr = MutualFundPortfolio.plot_correlation_heatmap(risk_metrics['correlation_matrix'])
             st.plotly_chart(fig_corr, use_container_width=True)
             
             st.markdown("---")
@@ -711,7 +711,7 @@ def main():
                     )
                 
                 # Distribution plot
-                fig_dist_3m = plot_monte_carlo_distribution(
+                fig_dist_3m = MutualFundPortfolio.plot_monte_carlo_distribution(
                     results['final_returns'],
                     results['median'],
                     results['top_20'],
@@ -720,7 +720,7 @@ def main():
                 st.plotly_chart(fig_dist_3m, use_container_width=True)
                 
                 # Simulation paths
-                fig_paths_3m = plot_simulation_paths(results['simulations'], num_paths=100)
+                fig_paths_3m = MutualFundPortfolio.plot_simulation_paths(results['simulations'], num_paths=100)
                 st.plotly_chart(fig_paths_3m, use_container_width=True)
             
             with tab2:
@@ -766,7 +766,7 @@ def main():
                     )
                 
                 # Distribution plot
-                fig_dist_6m = plot_monte_carlo_distribution(
+                fig_dist_6m = MutualFundPortfolio.plot_monte_carlo_distribution(
                     results['final_returns'],
                     results['median'],
                     results['top_20'],
@@ -775,14 +775,14 @@ def main():
                 st.plotly_chart(fig_dist_6m, use_container_width=True)
                 
                 # Simulation paths
-                fig_paths_6m = plot_simulation_paths(results['simulations'], num_paths=100)
+                fig_paths_6m = MutualFundPortfolio.plot_simulation_paths(results['simulations'], num_paths=100)
                 st.plotly_chart(fig_paths_6m, use_container_width=True)
             
             with tab3:
                 st.subheader("Time Horizon Comparison")
                 
                 # Comparison chart
-                fig_comparison = plot_percentile_comparison(
+                fig_comparison = MutualFundPortfolio.plot_percentile_comparison(
                     st.session_state.results_3m,
                     st.session_state.results_6m
                 )
