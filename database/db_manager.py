@@ -1,383 +1,174 @@
-import sqlite3
-import pandas as pd
-from datetime import datetime, timedelta
-from pathlib import Path
-import numpy as np
+# database/multi_asset_db_manager.py
 
-class DatabaseManager:
-    def __init__(self, db_path='mutual_funds.db'):
-        """Initialize database connection"""
-        self.db_path = db_path
-        self.conn = None
-        self.init_database()
+from database.db_manager import DatabaseManager
+import pandas as pd
+from datetime import datetime
+
+class MultiAssetDBManager(DatabaseManager):
+    """Extended database manager for multi-asset support"""
     
-    def get_connection(self):
-        """Get database connection"""
-        if self.conn is None:
-            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        return self.conn
-    
-    def init_database(self):
-        """Initialize database with schema"""
-        conn = self.get_connection()
-        
-        # Read and execute schema
-        schema_path = Path(__file__).parent / 'schema.sql'
-        if schema_path.exists():
-            with open(schema_path, 'r') as f:
-                schema = f.read()
-                conn.executescript(schema)
-        else:
-            # Inline schema if file doesn't exist
-            self._create_schema()
-        
-        conn.commit()
-    
-    def _create_schema(self):
-        """Create database schema inline"""
-        conn = self.get_connection()
-        
-        # Mutual Funds Table
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS mutual_funds (
-                scheme_code TEXT PRIMARY KEY,
-                scheme_name TEXT NOT NULL,
-                fund_house TEXT,
-                category TEXT,
-                sub_category TEXT,
-                launch_date DATE,
-                nav_date DATE,
-                current_nav REAL,
-                aum REAL,
-                expense_ratio REAL,
-                min_investment REAL,
-                exit_load TEXT,
-                returns_1m REAL,
-                returns_3m REAL,
-                returns_6m REAL,
-                returns_1y REAL,
-                returns_3y REAL,
-                returns_5y REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # NAV History Table
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS nav_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scheme_code TEXT NOT NULL,
-                date DATE NOT NULL,
-                nav REAL NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (scheme_code) REFERENCES mutual_funds(scheme_code),
-                UNIQUE(scheme_code, date)
-            )
-        ''')
-        
-        # Fund Statistics
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS fund_statistics (
-                scheme_code TEXT PRIMARY KEY,
-                mean_daily_return REAL,
-                std_daily_return REAL,
-                annual_volatility REAL,
-                sharpe_ratio REAL,
-                max_drawdown REAL,
-                avg_30d_volume REAL,
-                beta REAL,
-                alpha REAL,
-                calculated_date DATE,
-                FOREIGN KEY (scheme_code) REFERENCES mutual_funds(scheme_code)
-            )
-        ''')
-        
-        # Correlations
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS fund_correlations (
-                scheme_code_1 TEXT NOT NULL,
-                scheme_code_2 TEXT NOT NULL,
-                correlation REAL NOT NULL,
-                period_days INTEGER NOT NULL,
-                calculated_date DATE NOT NULL,
-                PRIMARY KEY (scheme_code_1, scheme_code_2, period_days)
-            )
-        ''')
-        
-        # Create indexes
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_nav_history_scheme_date ON nav_history(scheme_code, date)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_mutual_funds_category ON mutual_funds(category)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_mutual_funds_name ON mutual_funds(scheme_name)')
-        
-        conn.commit()
+    def __init__(self, db_url=None, db_type='postgresql'):
+        super().__init__(db_url, db_type)
     
     # ==========================================
-    # MUTUAL FUND METADATA OPERATIONS
+    # ASSET OPERATIONS
+    # ==========================================
+    
+    def insert_asset(self, isin, asset_type, symbol, name, exchange=None):
+        """Insert or update asset in master table"""
+        engine = self.get_engine()
+        
+        asset_data = {
+            'isin': isin,
+            'asset_type': asset_type,
+            'symbol': symbol,
+            'name': name,
+            'exchange': exchange,
+            'updated_at': datetime.now()
+        }
+        
+        df = pd.DataFrame([asset_data])
+        df.to_sql('assets', engine, if_exists='append', index=False, method='multi')
+    
+    def get_assets_by_type(self, asset_type, limit=1000):
+        """Get all assets of a specific type"""
+        engine = self.get_engine()
+        query = f"""
+            SELECT * FROM assets 
+            WHERE asset_type = '{asset_type}' AND is_active = TRUE
+            ORDER BY name
+            LIMIT {limit}
+        """
+        return pd.read_sql_query(query, engine)
+    
+    # ==========================================
+    # MUTUAL FUND OPERATIONS
     # ==========================================
     
     def insert_mutual_fund(self, fund_data):
-        """Insert or update mutual fund metadata"""
-        conn = self.get_connection()
+        """Insert mutual fund specific data"""
+        engine = self.get_engine()
         
-        columns = ', '.join(fund_data.keys())
-        placeholders = ', '.join(['?' for _ in fund_data])
+        # First insert into assets table
+        if 'isin' in fund_data:
+            self.insert_asset(
+                isin=fund_data['isin'],
+                asset_type='mutual_fund',
+                symbol=fund_data.get('scheme_code'),
+                name=fund_data.get('scheme_name'),
+                exchange='AMFI'
+            )
         
-        query = f'''
-            INSERT OR REPLACE INTO mutual_funds ({columns})
-            VALUES ({placeholders})
-        '''
-        
-        conn.execute(query, list(fund_data.values()))
-        conn.commit()
-    
-    def get_all_funds(self):
-        """Get all mutual funds"""
-        conn = self.get_connection()
-        query = 'SELECT * FROM mutual_funds ORDER BY scheme_name'
-        return pd.read_sql_query(query, conn)
-    
-    def search_funds(self, search_term='', category=None, fund_house=None):
-        """Search mutual funds with filters"""
-        conn = self.get_connection()
-        
-        query = 'SELECT * FROM mutual_funds WHERE 1=1'
-        params = []
-        
-        if search_term:
-            query += ' AND (scheme_name LIKE ? OR scheme_code LIKE ?)'
-            params.extend([f'%{search_term}%', f'%{search_term}%'])
-        
-        if category:
-            query += ' AND category = ?'
-            params.append(category)
-        
-        if fund_house:
-            query += ' AND fund_house = ?'
-            params.append(fund_house)
-        
-        query += ' ORDER BY scheme_name'
-        
-        return pd.read_sql_query(query, conn, params=params)
-    
-    def get_fund_details(self, scheme_code):
-        """Get details of a specific fund"""
-        conn = self.get_connection()
-        query = 'SELECT * FROM mutual_funds WHERE scheme_code = ?'
-        result = pd.read_sql_query(query, conn, params=[scheme_code])
-        return result.iloc[0] if not result.empty else None
-    
-    def get_categories(self):
-        """Get all unique categories"""
-        conn = self.get_connection()
-        query = 'SELECT DISTINCT category FROM mutual_funds WHERE category IS NOT NULL ORDER BY category'
-        result = pd.read_sql_query(query, conn)
-        return result['category'].tolist()
-    
-    def get_fund_houses(self):
-        """Get all unique fund houses"""
-        conn = self.get_connection()
-        query = 'SELECT DISTINCT fund_house FROM mutual_funds WHERE fund_house IS NOT NULL ORDER BY fund_house'
-        result = pd.read_sql_query(query, conn)
-        return result['fund_house'].tolist()
+        # Then insert into mutual_funds table
+        df = pd.DataFrame([fund_data])
+        df.to_sql('mutual_funds', engine, if_exists='append', index=False)
     
     # ==========================================
-    # NAV HISTORY OPERATIONS
+    # STOCK OPERATIONS
     # ==========================================
     
-    def insert_nav_data(self, scheme_code, date, nav):
-        """Insert NAV data for a specific date"""
-        conn = self.get_connection()
+    def insert_stock(self, stock_data):
+        """Insert stock specific data"""
+        engine = self.get_engine()
         
-        query = '''
-            INSERT OR REPLACE INTO nav_history (scheme_code, date, nav)
-            VALUES (?, ?, ?)
-        '''
-        
-        conn.execute(query, (scheme_code, date, nav))
-        conn.commit()
-    
-    def insert_nav_bulk(self, nav_df, scheme_code):
-        """Insert bulk NAV data from DataFrame"""
-        conn = self.get_connection()
-        
-        # Prepare data
-        nav_df = nav_df.copy()
-        nav_df['scheme_code'] = scheme_code
-        nav_df = nav_df.reset_index()
-        nav_df.columns = ['date', 'nav', 'scheme_code']
-        nav_df = nav_df[['scheme_code', 'date', 'nav']]
-        
-        # Convert date to string
-        nav_df['date'] = pd.to_datetime(nav_df['date']).dt.strftime('%Y-%m-%d')
-        
-        # Insert
-        nav_df.to_sql('nav_history', conn, if_exists='append', index=False)
-        conn.commit()
-    
-    def get_nav_history(self, scheme_code, start_date=None, end_date=None):
-        """Get NAV history for a fund"""
-        conn = self.get_connection()
-        
-        query = 'SELECT date, nav FROM nav_history WHERE scheme_code = ?'
-        params = [scheme_code]
-        
-        if start_date:
-            query += ' AND date >= ?'
-            params.append(start_date)
-        
-        if end_date:
-            query += ' AND date <= ?'
-            params.append(end_date)
-        
-        query += ' ORDER BY date'
-        
-        df = pd.read_sql_query(query, conn, params=params, parse_dates=['date'])
-        
-        if not df.empty:
-            df = df.set_index('date')
-        
-        return df
-    
-    def get_latest_nav_date(self, scheme_code):
-        """Get the latest NAV date for a fund"""
-        conn = self.get_connection()
-        query = 'SELECT MAX(date) as latest_date FROM nav_history WHERE scheme_code = ?'
-        result = pd.read_sql_query(query, conn, params=[scheme_code])
-        return result['latest_date'].iloc[0] if not result.empty else None
-    
-    # ==========================================
-    # STATISTICS OPERATIONS
-    # ==========================================
-    
-    def calculate_and_store_statistics(self, scheme_code, period_days=365):
-        """Calculate and store fund statistics"""
-        # Get NAV data
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=period_days)
-        
-        nav_df = self.get_nav_history(
-            scheme_code, 
-            start_date.strftime('%Y-%m-%d'),
-            end_date.strftime('%Y-%m-%d')
+        # Insert into assets table
+        self.insert_asset(
+            isin=stock_data['isin'],
+            asset_type='stock',
+            symbol=stock_data['symbol'],
+            name=stock_data['company_name'],
+            exchange=stock_data.get('exchange', 'NSE')
         )
         
-        if nav_df.empty or len(nav_df) < 30:
-            return None
-        
-        # Calculate returns
-        returns = nav_df['nav'].pct_change().dropna()
-        
-        if len(returns) == 0:
-            return None
-        
-        # Calculate statistics
-        mean_return = returns.mean()
-        std_return = returns.std()
-        annual_vol = std_return * np.sqrt(252)
-        sharpe = (mean_return / std_return) * np.sqrt(252) if std_return > 0 else 0
-        
-        # Max drawdown
-        cumulative = (1 + returns).cumprod()
-        max_dd = ((cumulative.cummax() - cumulative) / cumulative.cummax()).max()
-        
-        # Store statistics
-        conn = self.get_connection()
-        
-        query = '''
-            INSERT OR REPLACE INTO fund_statistics 
-            (scheme_code, mean_daily_return, std_daily_return, annual_volatility, 
-             sharpe_ratio, max_drawdown, calculated_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        '''
-        
-        conn.execute(query, (
-            scheme_code,
-            float(mean_return),
-            float(std_return),
-            float(annual_vol),
-            float(sharpe),
-            float(max_dd),
-            datetime.now().strftime('%Y-%m-%d')
-        ))
-        conn.commit()
-        
-        return {
-            'mean_daily_return': mean_return,
-            'std_daily_return': std_return,
-            'annual_volatility': annual_vol,
-            'sharpe_ratio': sharpe,
-            'max_drawdown': max_dd
-        }
-    
-    def get_fund_statistics(self, scheme_code):
-        """Get stored statistics for a fund"""
-        conn = self.get_connection()
-        query = 'SELECT * FROM fund_statistics WHERE scheme_code = ?'
-        result = pd.read_sql_query(query, conn, params=[scheme_code])
-        return result.iloc[0].to_dict() if not result.empty else None
+        # Insert into stocks table
+        df = pd.DataFrame([stock_data])
+        df.to_sql('stocks', engine, if_exists='append', index=False)
     
     # ==========================================
-    # CORRELATION OPERATIONS
+    # BOND OPERATIONS
     # ==========================================
     
-    def calculate_and_store_correlation(self, scheme_code_1, scheme_code_2, period_days=365):
-        """Calculate and store correlation between two funds"""
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=period_days)
+    def insert_bond(self, bond_data):
+        """Insert bond specific data"""
+        engine = self.get_engine()
         
-        # Get NAV data for both funds
-        nav1 = self.get_nav_history(scheme_code_1, start_date.strftime('%Y-%m-%d'))
-        nav2 = self.get_nav_history(scheme_code_2, start_date.strftime('%Y-%m-%d'))
+        # Insert into assets table
+        self.insert_asset(
+            isin=bond_data['isin'],
+            asset_type='bond',
+            symbol=bond_data.get('isin'),  # Bonds typically use ISIN as symbol
+            name=bond_data['bond_name'],
+            exchange='NSE'
+        )
         
-        if nav1.empty or nav2.empty:
-            return None
-        
-        # Merge on date
-        merged = pd.merge(nav1, nav2, left_index=True, right_index=True, suffixes=('_1', '_2'))
-        
-        if len(merged) < 30:
-            return None
-        
-        # Calculate returns
-        returns1 = merged['nav_1'].pct_change().dropna()
-        returns2 = merged['nav_2'].pct_change().dropna()
-        
-        # Calculate correlation
-        correlation = returns1.corr(returns2)
-        
-        # Store correlation
-        conn = self.get_connection()
-        
-        query = '''
-            INSERT OR REPLACE INTO fund_correlations 
-            (scheme_code_1, scheme_code_2, correlation, period_days, calculated_date)
-            VALUES (?, ?, ?, ?, ?)
-        '''
-        
-        conn.execute(query, (
-            scheme_code_1,
-            scheme_code_2,
-            float(correlation),
-            period_days,
-            datetime.now().strftime('%Y-%m-%d')
-        ))
-        conn.commit()
-        
-        return float(correlation)
+        # Insert into bonds table
+        df = pd.DataFrame([bond_data])
+        df.to_sql('bonds', engine, if_exists='append', index=False)
     
-    def get_correlation(self, scheme_code_1, scheme_code_2, period_days=365):
-        """Get stored correlation between two funds"""
-        conn = self.get_connection()
-        query = '''
-            SELECT correlation FROM fund_correlations 
-            WHERE scheme_code_1 = ? AND scheme_code_2 = ? AND period_days = ?
-        '''
-        result = pd.read_sql_query(query, conn, params=[scheme_code_1, scheme_code_2, period_days])
-        return result['correlation'].iloc[0] if not result.empty else None
+    # ==========================================
+    # PRICE HISTORY (Common for all assets)
+    # ==========================================
     
-    def close(self):
-        """Close database connection"""
-        if self.conn:
-            self.conn.close()
-            self.conn = None
+    def insert_price_history_bulk(self, price_df, isin):
+        """Insert bulk price history for any asset"""
+        engine = self.get_engine()
+        
+        price_df = price_df.copy()
+        price_df['isin'] = isin
+        
+        # Ensure required columns
+        required_cols = ['isin', 'date', 'close_price']
+        if not all(col in price_df.columns for col in required_cols):
+            raise ValueError("Missing required columns")
+        
+        price_df.to_sql('price_history', engine, if_exists='append', index=False)
+    
+    def get_price_history(self, isin, start_date=None, end_date=None):
+        """Get price history for any asset by ISIN"""
+        engine = self.get_engine()
+        
+        query = "SELECT * FROM price_history WHERE isin = %(isin)s"
+        params = {'isin': isin}
+        
+        if start_date:
+            query += " AND date >= %(start_date)s"
+            params['start_date'] = start_date
+        
+        if end_date:
+            query += " AND date <= %(end_date)s"
+            params['end_date'] = end_date
+        
+        query += " ORDER BY date"
+        
+        return pd.read_sql_query(query, engine, params=params, parse_dates=['date'])
+    
+    # ==========================================
+    # SEARCH OPERATIONS
+    # ==========================================
+    
+    def search_all_assets(self, search_term, asset_types=None, limit=100):
+        """Search across all asset types"""
+        engine = self.get_engine()
+        
+        query = """
+            SELECT a.*, 
+                   COALESCE(mf.scheme_name, s.company_name, b.bond_name) as full_name,
+                   COALESCE(mf.amc_name, s.sector, b.issuer) as additional_info
+            FROM assets a
+            LEFT JOIN mutual_funds mf ON a.isin = mf.isin
+            LEFT JOIN stocks s ON a.isin = s.isin
+            LEFT JOIN bonds b ON a.isin = b.isin
+            WHERE (a.name ILIKE %(search)s 
+                   OR a.symbol ILIKE %(search)s 
+                   OR a.isin ILIKE %(search)s)
+        """
+        
+        params = {'search': f'%{search_term}%', 'limit': limit}
+        
+        if asset_types:
+            placeholders = ','.join([f"'{t}'" for t in asset_types])
+            query += f" AND a.asset_type IN ({placeholders})"
+        
+        query += " LIMIT %(limit)s"
+        
+        return pd.read_sql_query(query, engine, params=params)
