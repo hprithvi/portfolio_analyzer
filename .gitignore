@@ -211,3 +211,6 @@ __marimo__/
 
 # Local commands cheatsheet
 commands.sh
+
+#Local scripts
+blogconverter.py
