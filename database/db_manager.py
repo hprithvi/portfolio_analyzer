@@ -49,7 +49,7 @@ class DatabaseManager:
     def get_engine(self):
         """Get or create SQLAlchemy engine"""
         if self.engine is None:
-            if self.db_type == 'postgres':
+            if self.db_type == 'postgresql':
                 # PostgreSQL with connection pooling
                 self.engine = create_engine(
                     self.db_url,
