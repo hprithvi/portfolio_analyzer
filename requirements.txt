@@ -11,3 +11,13 @@ datetime
 requests
 yfinance
 scipy
+streamlit==1.31.0
+pandas==2.1.4
+numpy==1.26.3
+plotly==5.18.0
+requests==2.31.0
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+fpdf2==2.8.1
+kaleido==0.2.1

@@ -195,3 +195,26 @@ CREATE TABLE IF NOT EXISTS data_quality_log (
     issues JSONB,
     FOREIGN KEY (isin) REFERENCES assets(isin) ON DELETE CASCADE
 );
+
+-- ==========================================
+-- USER EMAILS
+-- ==========================================
+CREATE TABLE IF NOT EXISTS user_emails (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ==========================================
+-- BATCH LOAD CHECKPOINTING
+-- ==========================================
+CREATE TABLE IF NOT EXISTS batch_checkpoint (
+    id SERIAL PRIMARY KEY,
+    job_type TEXT NOT NULL,
+    identifier TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(job_type, identifier)
+);
