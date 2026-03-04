@@ -1,0 +1,29 @@
+name: Daily Price Update
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 02:00 UTC (~7:30 AM IST) every day
+  workflow_dispatch:       # Allow manual trigger from GitHub UI
+
+jobs:
+  update-prices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run price update
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python database/update_prices.py --asset-type all
