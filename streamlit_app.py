@@ -58,8 +58,10 @@ st.markdown("""
 
 @st.cache_resource
 def get_db_manager(_version=2):
-    return MultiAssetDBManager(db_url=os.getenv('DATABASE_URL'), db_type='postgresql')
+    import streamlit as st
 
+    db_url = st.secrets.get("DATABASE_URL") or os.getenv('DATABASE_URL')
+    return MultiAssetDBManager(db_url=db_url, db_type='postgresql')
 
 class MutualFundPortfolio:
     """
