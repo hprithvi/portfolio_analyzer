@@ -354,6 +354,149 @@ class MultiAssetDataFetcher:
             print(f"❌ Error fetching NSE equity list: {e}")
             return pd.DataFrame()
     
+    # ==========================================
+    # ETFs
+    # ==========================================
+
+    def fetch_nse_etf_list(self):
+        """Fetch list of all NSE-listed ETFs with ISINs."""
+        try:
+            url = "https://nsearchives.nseindia.com/content/equities/eq_etfseclist.csv"
+            response = self.session.get(url, timeout=30)
+
+            if response.status_code == 200:
+                df = pd.read_csv(StringIO(response.text))
+                df.columns = df.columns.str.strip()
+
+                column_mapping = {
+                    'SYMBOL': 'symbol',
+                    'NAME OF SECURITY': 'company_name',
+                    'DATE OF LISTING': 'listing_date',
+                    'ISIN': 'isin',
+                    'FACE VALUE': 'face_value',
+                }
+                # Map columns that exist
+                rename_map = {k: v for k, v in column_mapping.items() if k in df.columns}
+                df = df.rename(columns=rename_map)
+
+                # Try alternate ISIN column names
+                if 'isin' not in df.columns:
+                    for col in df.columns:
+                        if 'isin' in col.lower():
+                            df = df.rename(columns={col: 'isin'})
+                            break
+
+                if 'symbol' not in df.columns:
+                    for col in df.columns:
+                        if 'symbol' in col.lower():
+                            df = df.rename(columns={col: 'symbol'})
+                            break
+
+                if 'company_name' not in df.columns:
+                    for col in df.columns:
+                        if 'name' in col.lower() and 'company_name' not in df.columns:
+                            df = df.rename(columns={col: 'company_name'})
+                            break
+
+                if 'isin' in df.columns:
+                    df['isin'] = df['isin'].str.strip()
+                if 'symbol' in df.columns:
+                    df['symbol'] = df['symbol'].str.strip()
+
+                print(f"Found {len(df)} NSE ETFs")
+                return df
+
+            print("Failed to fetch ETF list from NSE")
+            return pd.DataFrame()
+
+        except Exception as e:
+            print(f"Error fetching NSE ETF list: {e}")
+            return pd.DataFrame()
+
+    # ==========================================
+    # INDEX DATA
+    # ==========================================
+
+    def fetch_index_data(self, symbol, start_date, end_date):
+        """Fetch historical index data using NSE indices API.
+
+        Args:
+            symbol: Index symbol e.g. 'NIFTY 50', 'NIFTY 100', 'NIFTY 500'
+            start_date: datetime start date
+            end_date: datetime end date
+
+        Returns:
+            DataFrame with date, open, high, low, close columns
+        """
+        try:
+            from nsepy import get_history
+            data = get_history(symbol=symbol, start=start_date, end=end_date, index=True)
+            if data is not None and not data.empty:
+                data = data.reset_index()
+                data.columns = data.columns.str.strip()
+
+                # nsepy returns columns like 'Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Turnover'
+                rename_map = {
+                    'Date': 'date',
+                    'Open': 'open_price',
+                    'High': 'high_price',
+                    'Low': 'low_price',
+                    'Close': 'close_price',
+                    'Volume': 'volume',
+                    'Turnover': 'value',
+                }
+                data = data.rename(columns=rename_map)
+                data['date'] = pd.to_datetime(data['date'])
+                return data
+            return pd.DataFrame()
+        except ImportError:
+            print("nsepy not installed. Trying yfinance fallback for index data...")
+            return self._fetch_index_yfinance(symbol, start_date, end_date)
+        except Exception as e:
+            print(f"nsepy failed for {symbol}: {e}. Trying yfinance fallback...")
+            return self._fetch_index_yfinance(symbol, start_date, end_date)
+
+    def _fetch_index_yfinance(self, symbol, start_date, end_date):
+        """Fallback: fetch index data via yfinance."""
+        # Map Indian index names to yfinance tickers
+        yf_map = {
+            'NIFTY 50': '^NSEI',
+            'NIFTY 100': '^CNX100',
+            'NIFTY 500': '^CRSLDX',
+            'SENSEX': '^BSESN',
+            'NIFTY BANK': '^NSEBANK',
+        }
+        ticker = yf_map.get(symbol)
+        if not ticker:
+            print(f"No yfinance mapping for index: {symbol}")
+            return pd.DataFrame()
+
+        try:
+            data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+            if data.empty:
+                return pd.DataFrame()
+
+            data = data.reset_index()
+            # Handle MultiIndex columns from yfinance
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = [col[0] if col[1] == '' else col[0] for col in data.columns]
+
+            rename_map = {
+                'Date': 'date',
+                'Open': 'open_price',
+                'High': 'high_price',
+                'Low': 'low_price',
+                'Close': 'close_price',
+                'Adj Close': 'close_price',
+                'Volume': 'volume',
+            }
+            data = data.rename(columns=rename_map)
+            data['date'] = pd.to_datetime(data['date'])
+            return data
+        except Exception as e:
+            print(f"yfinance fallback failed for {symbol}: {e}")
+            return pd.DataFrame()
+
     def lookup_isin_nse(self, symbol):
         """
         Get ISIN for a given NSE symbol using quote API

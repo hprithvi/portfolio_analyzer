@@ -158,6 +158,166 @@ BHAV_COLUMN_MAP = {
 }
 
 
+def get_active_etfs(db):
+    """Get all active ETFs with their ISIN and symbol."""
+    engine = db.get_engine()
+    query = text("""
+        SELECT s.isin, s.symbol
+        FROM stocks s
+        JOIN assets a ON s.isin = a.isin
+        WHERE a.asset_type = 'etf' AND a.is_active = TRUE
+    """)
+    return pd.read_sql_query(query, engine)
+
+
+def update_etfs(db, fetcher):
+    """Update ETF prices from last available date to today."""
+    logger.info("=== UPDATING ETF PRICES ===")
+
+    last_date = get_last_price_date(db, 'etf')
+    if last_date is None:
+        logger.error("No existing ETF price data found. Run populate_data.py --asset-type etfs first.")
+        return
+
+    start_date = last_date + timedelta(days=1)
+    today = datetime.now().date()
+
+    if start_date > today:
+        logger.info("ETF prices are already up to date.")
+        return
+
+    logger.info(f"Fetching ETF bhav copies from {start_date} to {today}")
+
+    # Build symbol -> ISIN lookup from active ETFs
+    etfs_df = get_active_etfs(db)
+    symbol_to_isin = dict(zip(etfs_df['symbol'], etfs_df['isin']))
+    etf_symbols = set(symbol_to_isin.keys())
+    logger.info(f"Active ETFs: {len(symbol_to_isin)}")
+
+    # Generate business day range
+    date_range = pd.date_range(start=start_date, end=today, freq='B')
+    logger.info(f"Business days to process: {len(date_range)}")
+
+    if len(date_range) == 0:
+        logger.info("No business days to process.")
+        return
+
+    success_count = 0
+    error_count = 0
+    total_records = 0
+    start_time = time.time()
+
+    for i, date in enumerate(date_range, 1):
+        date_str = date.strftime('%Y-%m-%d')
+        try:
+            bhav_df = fetcher.fetch_nse_bhav_copy(date)
+
+            if bhav_df is None or (hasattr(bhav_df, 'empty') and bhav_df.empty):
+                continue
+
+            bhav_df.columns = bhav_df.columns.str.strip()
+
+            rename_map = {old: BHAV_COLUMN_MAP[old]
+                          for old in bhav_df.columns if old in BHAV_COLUMN_MAP}
+            bhav_df = bhav_df.rename(columns=rename_map)
+
+            # Filter to ETF symbols (instead of series filter)
+            if 'symbol' in bhav_df.columns:
+                bhav_df['symbol'] = bhav_df['symbol'].str.strip()
+                bhav_df = bhav_df[bhav_df['symbol'].isin(etf_symbols)]
+                bhav_df['isin'] = bhav_df['symbol'].map(symbol_to_isin)
+                bhav_df = bhav_df.dropna(subset=['isin'])
+
+            if bhav_df.empty:
+                continue
+
+            if 'date' in bhav_df.columns:
+                bhav_df['date'] = pd.to_datetime(bhav_df['date'], format='mixed', dayfirst=True)
+            else:
+                bhav_df['date'] = date
+
+            price_cols = ['isin', 'date', 'open_price', 'high_price', 'low_price',
+                          'close_price', 'volume', 'value', 'trades']
+            available = [c for c in price_cols if c in bhav_df.columns]
+            price_df = bhav_df[available].copy()
+
+            for col in ['open_price', 'high_price', 'low_price', 'close_price', 'volume', 'value', 'trades']:
+                if col in price_df.columns:
+                    price_df[col] = pd.to_numeric(price_df[col], errors='coerce')
+
+            inserted = db.insert_price_history_bulk(price_df)
+            total_records += inserted
+            success_count += 1
+
+            if i % 10 == 0 or i == len(date_range):
+                elapsed = time.time() - start_time
+                logger.info(f"[{i}/{len(date_range)}] {date_str} | "
+                            f"{total_records:,} records | {elapsed/60:.1f} min")
+
+            time.sleep(1)
+
+        except Exception as e:
+            error_count += 1
+            logger.warning(f"[{i}/{len(date_range)}] FAILED {date_str}: {e}")
+            time.sleep(2)
+
+    elapsed = time.time() - start_time
+    logger.info(f"ETF update complete: {success_count} days, {total_records:,} records, "
+                f"{error_count} errors in {elapsed/60:.1f} min")
+
+
+def update_indices(db, fetcher):
+    """Update index price data from last available date to today."""
+    logger.info("=== UPDATING INDEX PRICES ===")
+
+    indices = db.get_all_indices()
+    if indices.empty:
+        logger.info("No indices found in database. Run populate_data.py --asset-type indices first.")
+        return
+
+    today = datetime.now().date()
+
+    for _, idx_row in indices.iterrows():
+        symbol = idx_row['symbol']
+        try:
+            # Get last date for this index
+            engine = db.get_engine()
+            query = text("""
+                SELECT MAX(date) as last_date
+                FROM index_price_history
+                WHERE symbol = :symbol
+            """)
+            result = pd.read_sql_query(query, engine, params={'symbol': symbol})
+            last_date = result['last_date'].iloc[0]
+
+            if last_date is None:
+                start_date = datetime.now().date() - timedelta(days=3 * 365)
+            else:
+                if isinstance(last_date, str):
+                    start_date = datetime.strptime(last_date, '%Y-%m-%d').date() + timedelta(days=1)
+                else:
+                    start_date = pd.Timestamp(last_date).date() + timedelta(days=1)
+
+            if start_date > today:
+                logger.info(f"Index {symbol} is already up to date.")
+                continue
+
+            logger.info(f"Fetching {symbol} data from {start_date} to {today}")
+            data = fetcher.fetch_index_data(symbol, start_date, today)
+
+            if data is not None and not data.empty:
+                data['symbol'] = symbol
+                inserted = db.insert_index_price_bulk(data)
+                logger.info(f"Index {symbol}: inserted {inserted} records")
+            else:
+                logger.warning(f"No new data for index {symbol}")
+
+        except Exception as e:
+            logger.error(f"Failed to update index {symbol}: {e}")
+
+    logger.info("Index update complete")
+
+
 def update_stocks(db, fetcher):
     """Update stock prices from last available date to today."""
     logger.info("=== UPDATING STOCK PRICES ===")
@@ -266,7 +426,7 @@ def main():
     parser = argparse.ArgumentParser(
         description='Incremental price update for MF and stock data'
     )
-    parser.add_argument('--asset-type', choices=['mf', 'stocks', 'all'], default='all',
+    parser.add_argument('--asset-type', choices=['mf', 'stocks', 'etfs', 'indices', 'all'], default='all',
                         help='Which asset types to update (default: all)')
     parser.add_argument('--workers', type=int, default=10,
                         help='Concurrent workers for MF fetch (default: 10)')
@@ -292,6 +452,14 @@ def main():
         if args.asset_type in ['stocks', 'all']:
             fetcher = MultiAssetDataFetcher()  # Fresh session for NSE cookies
             update_stocks(db, fetcher)
+
+        if args.asset_type in ['etfs', 'all']:
+            fetcher = MultiAssetDataFetcher()
+            update_etfs(db, fetcher)
+
+        if args.asset_type in ['indices', 'all']:
+            fetcher = MultiAssetDataFetcher()
+            update_indices(db, fetcher)
     finally:
         db.close()
 

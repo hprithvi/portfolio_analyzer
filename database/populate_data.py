@@ -333,6 +333,198 @@ def populate_stocks(db, fetcher, limit=None, resume=True):
                 f"{error_count} errors in {elapsed/60:.1f} min")
 
 
+def populate_etfs(db, fetcher, limit=None, resume=True):
+    """Populate all NSE ETF data for the last 3 years."""
+    logger.info("=== PHASE: ETFs ===")
+
+    # Step 1: Fetch ETF master list for ISIN mapping
+    logger.info("Fetching NSE ETF master list...")
+    etf_df = fetcher.fetch_nse_etf_list()
+
+    if etf_df.empty:
+        logger.error("Failed to fetch ETF list")
+        return
+
+    logger.info(f"Found {len(etf_df)} ETFs in master list")
+
+    # Build symbol -> ISIN lookup and insert ETF metadata
+    symbol_to_isin = {}
+    for _, row in etf_df.iterrows():
+        sym = str(row.get('symbol', '')).strip()
+        isin = str(row.get('isin', '')).strip()
+        if not sym or not isin or isin == 'nan':
+            continue
+
+        symbol_to_isin[sym] = isin
+
+        try:
+            etf_name = str(row.get('company_name', sym)).strip()
+            # Insert into assets table as 'etf' type
+            db.insert_asset(
+                isin=isin,
+                asset_type='etf',
+                symbol=sym,
+                name=etf_name,
+                exchange='NSE'
+            )
+            # Insert into stocks table (reusing for ETF metadata)
+            stock_data = {
+                'isin': isin,
+                'symbol': sym,
+                'company_name': etf_name,
+                'exchange': 'NSE',
+                'series': 'ETF',
+                'face_value': row.get('face_value'),
+                'listing_date': str(row.get('listing_date')).strip() if row.get('listing_date') else None,
+            }
+            db.insert_stock(stock_data)
+        except Exception as e:
+            logger.warning(f"Failed to insert ETF metadata for {sym}: {e}")
+
+    logger.info(f"Inserted/updated {len(symbol_to_isin)} ETF records")
+
+    # Step 2: Download bhav copies for 3 years (ETF prices are in the same bhav copy)
+    start_date = datetime.now() - timedelta(days=LOOKBACK_YEARS * 365)
+    end_date = datetime.now() - timedelta(days=1)
+
+    # Get completed checkpoints for resume
+    completed_dates = set()
+    if resume:
+        try:
+            completed_dates = db.get_completed_checkpoints('etf_bhav')
+            logger.info(f"Resuming: {len(completed_dates)} dates already completed")
+        except Exception:
+            logger.info("No checkpoint table found, processing all dates")
+
+    # Generate business day range
+    date_range = pd.date_range(start=start_date, end=end_date, freq='B')
+    pending_dates = [d for d in date_range if d.strftime('%Y-%m-%d') not in completed_dates]
+
+    if limit:
+        pending_dates = pending_dates[:limit]
+
+    logger.info(f"{len(pending_dates)} trading days to process (of {len(date_range)} total business days)")
+
+    if not pending_dates:
+        logger.info("All ETF dates already processed")
+        return
+
+    # Step 3: Process each bhav copy
+    success_count = 0
+    error_count = 0
+    total_records = 0
+    start_time = time.time()
+    etf_symbols = set(symbol_to_isin.keys())
+
+    for i, date in enumerate(pending_dates, 1):
+        date_str = date.strftime('%Y-%m-%d')
+        try:
+            bhav_df = fetcher.fetch_nse_bhav_copy(date)
+
+            if bhav_df is None or (hasattr(bhav_df, 'empty') and bhav_df.empty):
+                db.mark_checkpoint('etf_bhav', date_str, 'completed')
+                continue
+
+            # Clean column names
+            bhav_df.columns = bhav_df.columns.str.strip()
+
+            # Rename columns
+            rename_map = {}
+            for old_col in bhav_df.columns:
+                if old_col in BHAV_COLUMN_MAP:
+                    rename_map[old_col] = BHAV_COLUMN_MAP[old_col]
+            bhav_df = bhav_df.rename(columns=rename_map)
+
+            # Filter to ETF symbols only (instead of series filter)
+            if 'symbol' in bhav_df.columns:
+                bhav_df['symbol'] = bhav_df['symbol'].str.strip()
+                bhav_df = bhav_df[bhav_df['symbol'].isin(etf_symbols)]
+                bhav_df['isin'] = bhav_df['symbol'].map(symbol_to_isin)
+                bhav_df = bhav_df.dropna(subset=['isin'])
+
+            if bhav_df.empty:
+                db.mark_checkpoint('etf_bhav', date_str, 'completed')
+                continue
+
+            # Parse date
+            if 'date' in bhav_df.columns:
+                bhav_df['date'] = pd.to_datetime(bhav_df['date'], format='mixed', dayfirst=True)
+            else:
+                bhav_df['date'] = date
+
+            # Select and clean columns for price_history
+            price_cols = ['isin', 'date', 'open_price', 'high_price', 'low_price',
+                          'close_price', 'volume', 'value', 'trades']
+            available = [c for c in price_cols if c in bhav_df.columns]
+            price_df = bhav_df[available].copy()
+
+            for col in ['open_price', 'high_price', 'low_price', 'close_price', 'volume', 'value', 'trades']:
+                if col in price_df.columns:
+                    price_df[col] = pd.to_numeric(price_df[col], errors='coerce')
+
+            inserted = db.insert_price_history_bulk(price_df)
+            total_records += inserted
+            success_count += 1
+            db.mark_checkpoint('etf_bhav', date_str, 'completed')
+
+            if i % 50 == 0 or i == len(pending_dates):
+                elapsed = time.time() - start_time
+                logger.info(f"[{i}/{len(pending_dates)}] {date_str} | "
+                            f"{total_records:,} total records | {elapsed/60:.1f} min elapsed")
+
+            time.sleep(1)  # Rate limiting for NSE
+
+        except Exception as e:
+            error_count += 1
+            try:
+                db.mark_checkpoint('etf_bhav', date_str, 'failed', str(e)[:500])
+            except Exception:
+                pass
+            logger.warning(f"[{i}/{len(pending_dates)}] FAILED {date_str}: {e}")
+            time.sleep(2)
+
+    elapsed = time.time() - start_time
+    logger.info(f"ETFs complete: {success_count} days, {total_records:,} records, "
+                f"{error_count} errors in {elapsed/60:.1f} min")
+
+
+SUPPORTED_INDICES = [
+    {'symbol': 'NIFTY 50', 'name': 'Nifty 50', 'exchange': 'NSE'},
+    {'symbol': 'SENSEX', 'name': 'S&P BSE Sensex', 'exchange': 'BSE'},
+    {'symbol': 'NIFTY 100', 'name': 'Nifty 100', 'exchange': 'NSE'},
+    {'symbol': 'NIFTY 500', 'name': 'Nifty 500', 'exchange': 'NSE'},
+]
+
+
+def populate_indices(db, fetcher):
+    """Populate index benchmark data for the last 3 years."""
+    logger.info("=== PHASE: INDICES ===")
+
+    start_date = datetime.now() - timedelta(days=LOOKBACK_YEARS * 365)
+    end_date = datetime.now() - timedelta(days=1)
+
+    for idx_info in SUPPORTED_INDICES:
+        symbol = idx_info['symbol']
+        logger.info(f"Processing index: {symbol}")
+
+        try:
+            # Insert index metadata
+            db.insert_index(symbol, idx_info['name'], idx_info['exchange'])
+
+            # Fetch historical data
+            data = fetcher.fetch_index_data(symbol, start_date, end_date)
+            if data is None or data.empty:
+                logger.warning(f"No data fetched for index {symbol}")
+                continue
+
+            data['symbol'] = symbol
+            inserted = db.insert_index_price_bulk(data)
+            logger.info(f"Index {symbol}: inserted {inserted} price records")
+
+        except Exception as e:
+            logger.error(f"Failed to populate index {symbol}: {e}")
+
+
 def apply_schema(db):
     """Apply the multi-asset schema to the database."""
     schema_path = Path(__file__).parent / 'schema.sql'
@@ -364,7 +556,7 @@ def apply_schema(db):
 
 def main():
     parser = argparse.ArgumentParser(description='Batch load Indian financial data (MF + stocks, 3 years)')
-    parser.add_argument('--asset-type', choices=['mf', 'stocks', 'all'], default='all',
+    parser.add_argument('--asset-type', choices=['mf', 'stocks', 'etfs', 'indices', 'all'], default='all',
                         help='Which asset types to load (default: all)')
     parser.add_argument('--limit', type=int,
                         help='Limit number of items (for testing)')
@@ -404,6 +596,14 @@ def main():
         if args.asset_type in ['stocks', 'all']:
             fetcher = MultiAssetDataFetcher()  # Fresh session for NSE cookies
             populate_stocks(db, fetcher, args.limit, resume)
+
+        if args.asset_type in ['etfs', 'all']:
+            fetcher = MultiAssetDataFetcher()  # Fresh session for NSE cookies
+            populate_etfs(db, fetcher, args.limit, resume)
+
+        if args.asset_type in ['indices', 'all']:
+            fetcher = MultiAssetDataFetcher()
+            populate_indices(db, fetcher)
 
     finally:
         db.close()

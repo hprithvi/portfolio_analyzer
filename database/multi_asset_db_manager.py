@@ -376,6 +376,85 @@ class MultiAssetDBManager(DatabaseManager):
         return True, "Email registered successfully."
 
     # ==========================================
+    # INDEX OPERATIONS
+    # ==========================================
+
+    def insert_index(self, symbol, name, exchange):
+        """Insert or update an index in the indices table."""
+        engine = self.get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("""
+                INSERT INTO indices (symbol, name, exchange)
+                VALUES (:symbol, :name, :exchange)
+                ON CONFLICT (symbol) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    exchange = EXCLUDED.exchange
+            """), {'symbol': symbol, 'name': name, 'exchange': exchange})
+            conn.commit()
+
+    def insert_index_price_bulk(self, price_df, chunk_size=5000):
+        """Bulk insert into index_price_history."""
+        if price_df is None or price_df.empty:
+            return 0
+
+        price_df = price_df.copy()
+        price_df['date'] = pd.to_datetime(price_df['date']).dt.strftime('%Y-%m-%d')
+
+        for col in ['open_price', 'high_price', 'low_price']:
+            if col not in price_df.columns:
+                price_df[col] = price_df.get('close_price')
+        if 'volume' not in price_df.columns:
+            price_df['volume'] = None
+
+        cols = ['symbol', 'date', 'open_price', 'high_price', 'low_price', 'close_price', 'volume']
+        available = [c for c in cols if c in price_df.columns]
+        tuples = list(price_df[available].itertuples(index=False, name=None))
+
+        engine = self.get_engine()
+        sql = """
+            INSERT INTO index_price_history (symbol, date, open_price, high_price, low_price,
+                                              close_price, volume)
+            VALUES %s
+            ON CONFLICT (symbol, date) DO NOTHING
+        """
+
+        raw_conn = engine.raw_connection()
+        try:
+            cursor = raw_conn.cursor()
+            inserted = 0
+            for i in range(0, len(tuples), chunk_size):
+                chunk = tuples[i:i+chunk_size]
+                execute_values(cursor, sql, chunk, page_size=chunk_size)
+                inserted += len(chunk)
+            raw_conn.commit()
+            return inserted
+        except Exception:
+            raw_conn.rollback()
+            raise
+        finally:
+            raw_conn.close()
+
+    def get_index_price_history(self, symbol, start_date=None):
+        """Get price history for an index."""
+        engine = self.get_engine()
+        conditions = ['symbol = :symbol']
+        params = {'symbol': symbol}
+
+        if start_date:
+            conditions.append('date >= :start_date')
+            params['start_date'] = start_date
+
+        where_clause = ' AND '.join(conditions)
+        query = text(f"SELECT * FROM index_price_history WHERE {where_clause} ORDER BY date")
+        return pd.read_sql_query(query, engine, params=params, parse_dates=['date'])
+
+    def get_all_indices(self):
+        """Return all active indices."""
+        engine = self.get_engine()
+        query = text("SELECT * FROM indices WHERE is_active = TRUE ORDER BY symbol")
+        return pd.read_sql_query(query, engine)
+
+    # ==========================================
     # SEARCH OPERATIONS
     # ==========================================
 

@@ -206,6 +206,31 @@ CREATE TABLE IF NOT EXISTS user_emails (
 );
 
 -- ==========================================
+-- INDEX BENCHMARKS
+-- ==========================================
+CREATE TABLE IF NOT EXISTS indices (
+    symbol TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS index_price_history (
+    id SERIAL PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    date DATE NOT NULL,
+    open_price REAL,
+    high_price REAL,
+    low_price REAL,
+    close_price REAL,
+    volume BIGINT,
+    FOREIGN KEY (symbol) REFERENCES indices(symbol) ON DELETE CASCADE,
+    UNIQUE(symbol, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_index_price_history_symbol_date ON index_price_history(symbol, date);
+
+-- ==========================================
 -- BATCH LOAD CHECKPOINTING
 -- ==========================================
 CREATE TABLE IF NOT EXISTS batch_checkpoint (
