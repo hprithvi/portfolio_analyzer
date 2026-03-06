@@ -307,12 +307,20 @@ class MutualFundPortfolio:
         return fig
 
 
-    def plot_nav_history(nav_data):
-    #"""Plot NAV history for all funds"""
+    def plot_nav_history(nav_data, portfolio_weights=None, index_data=None):
+    #"""Plot NAV history for all funds, with optional portfolio composite and benchmark lines"""
         fig = go.Figure()
 
-        for fund, nav in nav_data.items():
-        # Normalize to 100 for comparison
+        # Find common start date (latest first date across all fund series)
+        common_start = max(nav.index.min() for nav in nav_data.values())
+
+        # Trim all series to common start
+        aligned_nav = {fund: nav[nav.index >= common_start] for fund, nav in nav_data.items()}
+
+        # Individual fund lines
+        for fund, nav in aligned_nav.items():
+            if nav.empty:
+                continue
             normalized = (nav / nav.iloc[0]) * 100
             fig.add_trace(go.Scatter(
             x=nav.index,
@@ -320,6 +328,38 @@ class MutualFundPortfolio:
             name=fund,
             mode='lines'
         ))
+
+        # Portfolio composite line
+        if portfolio_weights and len(aligned_nav) > 1:
+            try:
+                returns_df = pd.DataFrame({f: nav.pct_change() for f, nav in aligned_nav.items()}).dropna()
+                if not returns_df.empty:
+                    weights = np.array([portfolio_weights.get(f, 0) for f in returns_df.columns])
+                    portfolio_daily = (returns_df * weights).sum(axis=1)
+                    portfolio_cumulative = (1 + portfolio_daily).cumprod() * 100
+                    fig.add_trace(go.Scatter(
+                    x=portfolio_cumulative.index,
+                    y=portfolio_cumulative,
+                    name='Portfolio',
+                    mode='lines',
+                    line=dict(color='white', width=3)
+                ))
+            except Exception:
+                pass
+
+        # Benchmark index lines
+        if index_data:
+            for idx_name, idx_series in index_data.items():
+                trimmed = idx_series[idx_series.index >= common_start]
+                if not trimmed.empty:
+                    normalized = (trimmed / trimmed.iloc[0]) * 100
+                    fig.add_trace(go.Scatter(
+                    x=trimmed.index,
+                    y=normalized,
+                    name=idx_name,
+                    mode='lines',
+                    line=dict(dash='dash', width=2)
+                ))
 
         fig.update_layout(
         title="Normalized Price Performance (Base = 100)",
@@ -656,8 +696,8 @@ def main():
 
         asset_type_filter = st.multiselect(
             "Filter by type (optional):",
-            options=['mutual_fund', 'stock'],
-            format_func=lambda x: 'Mutual Fund' if x == 'mutual_fund' else 'Stock'
+            options=['mutual_fund', 'stock', 'etf'],
+            format_func=lambda x: {'mutual_fund': 'Mutual Fund', 'stock': 'Stock', 'etf': 'ETF'}[x]
         )
 
         if st.button("🔍 Search", use_container_width=True):
@@ -684,7 +724,7 @@ def main():
                 symbol = row.get('symbol', '')
                 asset_type = row.get('asset_type', '')
                 isin = row.get('isin', '')
-                type_label = 'MF' if asset_type == 'mutual_fund' else 'Stock'
+                type_label = {'mutual_fund': 'MF', 'stock': 'Stock', 'etf': 'ETF'}.get(asset_type, asset_type)
                 option_str = f"{display_name} | {symbol} | {type_label}"
                 options.append(option_str)
                 isin_map[option_str] = {
@@ -867,7 +907,37 @@ def main():
 
             # NAV History
             st.header("📊 Historical Performance")
-            fig_nav =MutualFundPortfolio.plot_nav_history(st.session_state.portfolio.nav_data)
+
+            # Benchmark index selector
+            try:
+                available_indices = db.get_all_indices()
+                if not available_indices.empty:
+                    selected_indices = st.multiselect(
+                        "Compare with benchmarks:",
+                        options=available_indices['symbol'].tolist(),
+                        default=[]
+                    )
+                else:
+                    selected_indices = []
+            except Exception:
+                selected_indices = []
+
+            # Fetch selected index data
+            index_data = {}
+            start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
+            for idx_symbol in selected_indices:
+                try:
+                    idx_prices = db.get_index_price_history(idx_symbol, start_date=start_date)
+                    if not idx_prices.empty:
+                        index_data[idx_symbol] = idx_prices.set_index('date')['close_price']
+                except Exception:
+                    pass
+
+            fig_nav = MutualFundPortfolio.plot_nav_history(
+                st.session_state.portfolio.nav_data,
+                portfolio_weights=st.session_state.portfolio.portfolio,
+                index_data=index_data if index_data else None
+            )
             st.plotly_chart(fig_nav, use_container_width=True)
 
             st.markdown("---")
