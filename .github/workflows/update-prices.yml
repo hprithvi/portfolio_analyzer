@@ -2,7 +2,7 @@ name: Daily Price Update
 
 on:
   schedule:
-    - cron: '0 2 * * *'  # 02:00 UTC (~7:30 AM IST) every day
+    - cron: '0 2 * * 1-5'  # 02:00 UTC (~7:30 AM IST) every day
   workflow_dispatch:       # Allow manual trigger from GitHub UI
 
 jobs:
