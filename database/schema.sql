@@ -228,7 +228,7 @@ CREATE TABLE IF NOT EXISTS index_price_history (
     UNIQUE(symbol, date)
 );
 
-CREATE INDEX IF NOT EXISTS idx_index_price_history_symbol_date ON index_price_history(symbol, date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_index_price_history_symbol_date ON index_price_history(symbol, date);
 
 -- ==========================================
 -- BATCH LOAD CHECKPOINTING

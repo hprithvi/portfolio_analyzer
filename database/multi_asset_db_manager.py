@@ -411,6 +411,15 @@ class MultiAssetDBManager(DatabaseManager):
         tuples = list(price_df[available].itertuples(index=False, name=None))
 
         engine = self.get_engine()
+
+        # Ensure the unique index exists (handles tables created before the constraint was added)
+        with engine.connect() as conn:
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_index_price_history_symbol_date "
+                "ON index_price_history(symbol, date)"
+            ))
+            conn.commit()
+
         sql = """
             INSERT INTO index_price_history (symbol, date, open_price, high_price, low_price,
                                               close_price, volume)
